@@ -9,8 +9,8 @@ import uuid
 
 
 class ExpenseModel():
-    def __init__(self, identifier, amount, category_name, category_identifier,
-                 merchant_name, merchant_identifier, transaction_utc):
+    def __init__(self, identifier, amount, category_identifier,
+                 merchant_identifier, transaction_utc):
         self.identifier = identifier
         self.amount = amount
         self.category_identifier = category_identifier
@@ -96,7 +96,7 @@ class Expenses(Resource):
                         'merchant_identifier': post_merchant_id,
                         'transaction_utc': req_transaction_utc}
 
-        with get_dbclient().start_session() as session:
+        with db_helper().get_dbclient().start_session() as session:
             with session.start_transaction():
                 if is_new_category:
                     # insert the new category
