@@ -1,0 +1,6 @@
+flask
+pymongo
+markdown
+dnspython
+flask-restful
+marshmallow
