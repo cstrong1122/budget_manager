@@ -2,10 +2,23 @@ from flask import Flask, g, request
 from flask_restful import Resource, Api
 from bson.json_util import dumps
 from expense_tracker.db_helper import db_helper
-import os
-import markdown
+from bson.objectid import ObjectId
+from marshmallow import Schema, fields, post_load
 import datetime
 import uuid
+import json
+
+
+class ExpenseSchema(Schema):
+    _id = fields.Str(dump_to='identifier', load_from='identifier')
+    amount = fields.Number()
+    category_identifier = fields.Str()
+    merchant_identifier = fields.Str()
+    transaction_utc = fields.Str()
+
+    @post_load
+    def make_expense(self, data, **kwargs):
+        return ExpenseModel(**data)
 
 
 class ExpenseModel():
@@ -24,25 +37,25 @@ class ExpenseModel():
 class Expenses(Resource):
     def __init__(self):
         self.db = db_helper().get_db()
+        self.schema = ExpenseSchema()
 
     def get(self):
 
-        fromDateTime = None
-        toDateTime = None
-        query = None
+        dt_from = request.args.get('from')
+        dt_to = request.args.get('to')
+        dt_range = {}
 
-        if request.args.get('from'):
-            fromDateTime = request.args.get('from')
+        if dt_from:
+            dt_range['$gte'] = dt_from
 
-        if request.args.get('to'):
-            toDateTime = request.args.get('to')
+        if dt_to:
+            dt_range['$lt'] = dt_to
 
-        if fromDateTime and toDateTime:
-            query = {'transaction_utc': {
-                '$gte': fromDateTime, '$lt': toDateTime}}
+        query = {'transaction_utc': dt_range}
 
-        expenses = dumps(
-            list(self.db.expenses.find({} if query is None else query)))
+        expenses = self.schema.dump(
+            self.db.expenses.find({} if len(dt_range) == 0 else query),
+            many=True)
         return {'message': 'Success', 'data': expenses}
 
     def post(self):
@@ -57,80 +70,55 @@ class Expenses(Resource):
         req_merchant_name = json_data['merchant_name']
         req_transaction_utc = json_data['transaction_utc']
 
-        post_expense_id = None
-        post_category_id = None
-        post_merchant_id = None
-
-        is_new_category = False
-        is_new_merchant = False
-
         # check if category already exists with same name
-        existing_category = self.db.categories.find_one(
-            {'name': req_category_name})
-
-        # if the category already exists, initialize the category id
-        if existing_category is not None:
-            post_category_id = existing_category['identifier']
-        # if it doesn't exist, insert the category and get the category id
-        else:
-            is_new_category = True
-            # genereate the category identifier
-            post_category_id = uuid.uuid4()
+        category_id = self.db.categories.find_one(
+            {'name': req_category_name})['_id']
 
         # check if merchant already exists with same name
-        existing_merchant = self.db.merchants.find_one(
-            {'name': req_merchant_name})
-
-        # if the merchant already exists, initialize the merchant id
-        if existing_merchant is not None:
-            post_merchant_id = existing_merchant['identifier']
-        # if it doesn't exist, insert the merchant and get the merchant id
-        else:
-            is_new_merchant = True
-            # genereate the merchant identifier
-            post_merchant_id = uuid.uuid4()
-
-        expense_json = {'identifier': uuid.uuid4(),
-                        'amount': req_expense_amt,
-                        'category_identifier': post_category_id,
-                        'merchant_identifier': post_merchant_id,
-                        'transaction_utc': req_transaction_utc}
+        merchant_id = self.db.merchants.find_one(
+            {'name': req_merchant_name})['_id']
 
         with db_helper().get_dbclient().start_session() as session:
             with session.start_transaction():
-                if is_new_category:
+                if not category_id:
                     # insert the new category
-                    category_object_id = self.db.categories.insert_one(
-                        {'identifier': post_category_id,
-                         'name': req_category_name}).inserted_id
+                    category_id = self.db.categories.insert_one(
+                        {'name': req_category_name}).inserted_id
 
-                if is_new_merchant:
+                if not merchant_id:
                     # insert the new merchant
-                    merchant_object_id = self.db.merchants.insert_one(
-                        {'identifier': post_merchant_id,
-                         'name': req_merchant_name}).inserted_id
+                    merchant_id = self.db.merchants.insert_one(
+                        {'name': req_merchant_name}).inserted_id
+
+                # build expense here
+                expense_json = {'amount': req_expense_amt,
+                                'category_identifier': category_id,
+                                'merchant_identifier': merchant_id,
+                                'transaction_utc': req_transaction_utc}
 
                 # insert new expense
-                expense_object_id = self.db.expenses.insert_one(
+                expense_id = self.db.expenses.insert_one(
                     expense_json).inserted_id
 
-        # return inserted record
-        ret = self.db.expenses.find_one(expense_object_id)
+        data = self.schema.dump(self.db.expenses.find_one(expense_id))
 
-        return {'message': 'Success', 'data': dumps(ret)}, 201
+        return {'message': 'Success',
+                'data': data}, 201
 
 
 class Expense(Resource):
     def __init__(self):
-        self.db = get_db()
+        self.db = db_helper().get_db()
+        self.schema = ExpenseSchema()
 
     def get(self, identifier):
 
         expense = self.db.expenses.find_one(
-            {'identifier': uuid.UUID(identifier)})
+            {'_id': ObjectId(identifier)})
 
         if not expense:
             return {'message':
-                    'Record not found for identifier: %s' % identifier}, 400
+                    'Record not found for identifier: %s' %
+                    str(identifier)}, 400
 
-        return {'message': 'Success', 'data': dumps(expense)}, 200
+        return {'message': 'Success', 'data': self.schema.dump(expense)}, 200

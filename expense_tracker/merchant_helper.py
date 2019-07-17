@@ -9,8 +9,8 @@ import uuid
 
 
 class MerchantModel():
-    def __init__(self, identifier, name):
-        self.identifier = identifier
+    def __init__(self, _id, name):
+        self._id = _id
         self.name = name
 
     def __repr__(self):
@@ -33,7 +33,7 @@ class Merchant(Resource):
     def get(self, identifier):
 
         merchant = self.db.merchants.find_one(
-            {'identifier': uuid.UUID(identifier)})
+            {'identifier': identifier})
 
         if not merchant:
             return {'message':
